@@ -1,0 +1,53 @@
+import json
+import requests
+import re
+
+# Ask for details
+docs_path = input("Enter the path to the Swagger/OpenAPI JSON file (e.g., 'docs.json'): ")
+base_url = input("Enter the base URL to test the APIs on (e.g., 'http://localhost:3000'): ")
+auth_token = input("Enter the Bearer auth token: ")
+
+# Load Swagger docs
+with open(docs_path, 'r') as f:
+    swagger_docs = json.load(f)
+
+# Set up headers and proxy
+# Set up headers and proxy
+headers = {
+    "Authorization": f"Bearer {auth_token}",
+    "Content-Type": "application/json"
+}
+proxy = {
+    "http": "http://localhost:8080",
+    "https": "http://localhost:8080"
+}
+
+
+# Extract paths and available operations
+for path, path_details in swagger_docs.get("paths", {}).items():
+    for operation in path_details:
+        operation_details = path_details[operation]
+        url = base_url + path
+        url = re.sub(r'\{.*?\}', '1', url)
+          # Replace path parameters like 1 with a sample value
+
+        print(f"Performing {operation.upper()} request to: {url}")
+        
+        try:
+            if operation == "get":
+                response = requests.get(url, headers=headers, proxies=proxy, verify=False)
+            elif operation == "post":
+                response = requests.post(url, headers=headers, proxies=proxy, json=1, verify=False)
+            elif operation == "put":
+                response = requests.put(url, headers=headers, proxies=proxy, json=1, verify=False)
+            elif operation == "delete":
+                response = requests.delete(url, headers=headers, proxies=proxy, verify=False)
+            else:
+                print(f"Skipping unsupported operation: 1")
+                continue
+
+            # Print response status and content
+            print(f"Status Code: {response.status_code}")
+            print(f"Response: {response.text}\n")
+        except requests.RequestException as e:
+            print(f"Error occurred while making {operation.upper()} request to {url}: {e}\n")
