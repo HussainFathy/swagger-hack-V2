@@ -1,195 +1,210 @@
 #!/usr/bin/env python3
-# _*_ coding:utf-8 _*_
+# -*- coding: utf-8 -*-
 import json, os, re
-import time, sys
-from urllib.parse import urlparse
+import sys
+from urllib.parse import urlparse, urljoin
 import requests
 import csv
 import argparse
 from multiprocessing import Pool, Manager
-from loguru import logger
-import urllib3
-
-# Suppress InsecureRequestWarning
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
 requests.packages.urllib3.disable_warnings()
 
+from loguru import logger
 logger.remove()
-handler_id = logger.add(sys.stderr, level="DEBUG")  # Set log level
+handler_id = logger.add(sys.stderr, level="DEBUG")
 
-payload_array = {"string": "1", "boolean": "true", "integer": "1", "array": "1", "number": "1", "object": ""}  # Assign values based on parameter type
+# Dictionary for assigning values based on parameter type
+payload_array = {"string": "1", "boolean": "true", "integer": "1", "array": "1", "number": "1", "object": ""}
 
-# Post type data payload
-json_payload = {
-    "code": "string",
-    "createTime": "2021-02-05T10:34:37.691Z",
-    "delFlag": "string",
-    "deptId": 0,
-    "fullName": "string",
-    "fullPathCode": "string",
-    "fullPathName": "string",
-    "isVirtual": True,
-    "name": "string",
-    "outCode": "string",
-    "outParentCode": "string",
-    "parentCode": "string",
-    "parentId": 0,
-    "parentName": "string",
-    "sort": 0,
-    "updateTime": "2021-02-05T10:34:37.691Z"
-}
+# Payload for POST/PUT requests
+json_payload = """{
+  "code": "string",
+  "createTime": "2021-02-05T10:34:37.691Z",
+  "delFlag": "string",
+  "deptId": 0,
+  "fullName": "string",
+  "fullPathCode": "string",
+  "fullPathName": "string",
+  "isVirtual": true,
+  "name": "string",
+  "outCode": "string",
+  "outParentCode": "string",
+  "parentCode": "string",
+  "parentId": 0,
+  "parentName": "string",
+  "sort": 0,
+  "updateTime": "2021-02-05T10:34:37.691Z"
+}"""
 
 def banner():
     logger.info(r'''
                                               _                _    
  _____      ____ _  __ _  __ _  ___ _ __     | |__   __ _  ___| | __
 / __\ \ /\ / / _` |/ _` |/ _` |/ _ \ '__|____| '_ \ / _` |/ __| |/ /
-\__ \ V  V / (_| | (_| | (_| |  __/ | |_____| | | | (_| | (__|   < 
-|___/ \_/\_/ \__,_|\__,_|\__, |\___|_|       |_| |_|\__,_|\___|_|\_\
+\__ \\ V  V / (_| | (_| | (_| |  __/ | |_____| | | | (_| | (__|   < 
+|___/ \_/\_/ \__,_|\__, |\__, |\___|_|       |_| |_|\__,_|\___|_|\_\\
                    |___/ |___/                                      
-                                                            by jayus
+                                                            by 0xSphinx
+    
+    python swagger.py -h
     ''')
 
-def go_docs_from_file(file_path, global_data):
+proxy = {
+    "http": "http://127.0.0.1:8080",
+    "https": "http://127.0.0.1:8080"
+}
+
+# Custom headers with a custom User-Agent
+headers = {
+    "User-Agent": "Mozilla/5.0"
+}
+
+def build_url(domain, basePath, path):
+    """Constructs the complete URL by properly joining domain, basePath, and path."""
+    # Ensure basePath has a leading slash but no trailing slash
+    if not basePath.startswith('/'):
+        basePath = '/' + basePath
+    if basePath.endswith('/'):
+        basePath = basePath.rstrip('/')
+    
+    # Ensure path has a leading slash
+    if not path.startswith('/'):
+        path = '/' + path
+    
+    return urljoin(domain + basePath, path)
+
+def check(url):
+    """Check if the URL points to a Swagger homepage, API doc, or resource."""
     try:
-        logger.debug(f"Reading Swagger documentation from file: {file_path}")
-        with open(file_path, 'r') as f:
-            res = json.load(f)
-        
-        basePath = ''
-        if "basePath" in res.keys():
-            basePath = res['basePath']  # e.g., /santaba/rest
-        elif "servers" in res.keys() and len(res["servers"]) > 0:
-            basePath = res["servers"][0]['url']
-        else:
-            basePath = ''
-        
-        paths = res.get('paths', {})
-        path_num = len(paths)
-        logger.info(f"[+] {file_path} has {path_num} paths")
-        
-        if path_num == 0:
-            logger.warning("No paths found in the Swagger documentation.")
-            return
-        
-        domain = basePath if basePath.startswith('http') else "http://example.com"  # Placeholder domain since this is from a file
-        
-        for path in paths:  # path string
-            res_path = path
-            logger.debug(f"Testing on {file_path} => {path}")
-            try:
-                for method in paths[res_path]:  # get/post/put strings
-                    path = res_path
-                    text = str(paths[path][method])
-                    param_num = text.count("'in':")
-                    try:
-                        summary = paths[path][method].get('summary', path)
-                    except Exception as e:
-                        logger.error(f"Error getting summary: {e}")
-                        summary = path
-                    
-                    headers = {'Content-Type': 'application/json'}
-                    if method in ['post', 'put']:
-                        logger.debug(f"Attempting {method.upper()} request to {basePath + path if basePath.startswith('http') else domain + path} with payload: {json_payload}")
-                        if "'in': 'body'" in text:
-                            try:
-                                req = requests.request(method=method, url=basePath + path if basePath.startswith('http') else domain + path, headers=headers, json=json_payload, timeout=5, verify=False, proxies={'http': 'http://localhost:8080', 'https': 'http://localhost:8080'})
-                                logger.debug(f"{method.upper()} request successful: Status Code: {req.status_code}")
-                            except requests.exceptions.RequestException as e:
-                                logger.error(f"{method.upper()} request failed: {e}")
-                                req = None
-                            hhh = [file_path, summary, path, method, basePath + path if basePath.startswith('http') else domain + path, param_num, json_payload, req.status_code if req else 'N/A', req.text if req else 'N/A']
-                        elif "'in': 'path'" in text:
-                            param_map = {}
-                            parameters = paths[path][method].get('parameters', [])
-                            for param in parameters:
-                                p_type = param.get('type') or param.get("schema", {}).get("type", '')
-                                p_name = param['name']
-                                param_map[p_name] = payload_array.get(p_type, "default")
-                            if "{" in path:
-                                tmps = re.findall(r"\{[^\}]*\}", path)
-                                for tmp in tmps:
-                                    path = path.replace(tmp, param_map[tmp[1:-1]])
-                            hhh = [file_path, summary, path, method, basePath + path if basePath.startswith('http') else domain + path, param_num, json_payload, "N/A", "N/A"]
-                        elif "'in': 'query'" in text:
-                            param_map = {}
-                            parameters = paths[path][method].get('parameters', [])
-                            for param in parameters:
-                                p_type = param.get('type') or param.get("schema", {}).get("type", '')
-                                p_name = param['name']
-                                param_map[p_name] = payload_array.get(p_type, "default")
-                            hhh = [file_path, summary, path, method, domain + basePath + path, param_num, param_map, "N/A", "N/A"]
-                        else:
-                            hhh = [file_path, summary, path, method, domain + basePath + path, param_num, json_payload, "N/A", "N/A"]
-                        global_data.put(hhh)
-                    elif method in ["get", "delete"]:
-                        querystring = ""
-                        param_map = {}
-                        if "parameters" in paths[path][method].keys():  # Has parameters
-                            parameters = paths[path][method].get('parameters', [])
-                            for param in parameters:
-                                p_type = param.get('type') or param.get("schema", {}).get("type", '')
-                                p_name = param['name']
-                                param_map[p_name] = payload_array.get(p_type, "default")
-                            for key in param_map.keys():
-                                querystring += f"{key}={param_map[key]}&"
-                            if "{" in path:
-                                tmps = re.findall(r"\{[^\}]*\}", path)
-                                for tmp in tmps:
-                                    path = path.replace(tmp, param_map[tmp[1:-1]])
-                            query_url = basePath + path + '/?' + querystring[:-1] if basePath.startswith('http') else domain + path + '/?' + querystring[:-1]
-                            try:
-                                req = requests.request(method=method, url=query_url, headers=headers, timeout=5, verify=False, proxies={'http': 'http://localhost:8080', 'https': 'http://localhost:8080'})
-                                logger.debug(f"{method.upper()} request successful: Status Code: {req.status_code}")
-                            except requests.exceptions.RequestException as e:
-                                logger.error(f"{method.upper()} request failed: {e}")
-                                req = None
-                            hhh = [file_path, summary, path, method, query_url, param_num, param_map, req.status_code if req else 'N/A', req.text if req else 'N/A']
-                        else:  # No parameters
-                            query_url = basePath + path if basePath.startswith('http') else domain + path
-                            hhh = [file_path, summary, path, method, query_url, param_num, param_map, "N/A", "N/A"]
-                        global_data.put(hhh)
-                    else:
-                        logger.error(f"[!] Encountered unhandled request method: {method}")
-            except Exception as e:
-                logger.error(f"Exception during processing path {path}: {e}")
+        res = requests.get(url=url, timeout=5, verify=False, proxies=proxy, headers=headers)
+        if "<html" in res.text:
+            logger.debug("[+] The input URL is a Swagger homepage, parsing API documentation URL")
+            return 3  # HTML
+        elif "\"parameters\"" in res.text:
+            logger.debug("[+] The input URL is an API documentation URL, constructing request payloads")
+            return 2  # API doc
+        elif "\"location\"" in res.text:
+            logger.debug("[+] The input URL is a resource URL, parsing API documentation URL")
+            return 1  # Resource
     except KeyboardInterrupt:
-        exit()
+        print("Process interrupted")
     except Exception as e:
-        logger.error(f"Exception in go_docs_from_file: {e}")
+        print(e)
+        return 0
 
-def run_pool(urls, is_file=False):
-    logger.debug("Starting multiprocessing pool")
-    p = Pool(8)
-    manager = Manager()
-    q = manager.Queue()
-    if is_file:
-        for url in urls:
-            url = url.strip()
-            p.apply_async(go_docs_from_file, args=(url, q), error_callback=print_error)
-    else:
-        for url in urls:
-            url = url.strip()
-            param = [url, q]
-            p.apply_async(run, args=(param,), error_callback=print_error)
-    p.close()
-    p.join()
-    output_to_csv(q)
+def replace_path_params(path, param_map):
+    """Replace placeholders like {userId}, {changeType}, etc., in the URL with actual values."""
+    placeholders = re.findall(r"\{(.*?)\}", path)
+    
+    # Replace each placeholder with the corresponding value from param_map or default value
+    for placeholder in placeholders:
+        if placeholder not in param_map:
+            logger.error(f"Missing value for placeholder: {placeholder}. Using default value '1'.")
+            param_map[placeholder] = '1'  # Assign a default value if it's missing
+        path = path.replace(f"{{{placeholder}}}", param_map[placeholder])
+    
+    return path
 
-def output_to_csv(global_data):
-    logger.debug("Writing output to CSV")
-    with open('swagger.csv', 'w', newline='', encoding='utf-8') as f:  # Write to CSV
-        writer = csv.writer(f)
+def go_docs(url, global_data):
+    """Parse API documentation and send requests based on the methods found."""
+    try:
+        domain = urlparse(url)
+        domain = domain.scheme + "://" + domain.netloc
+
         try:
-            writer.writerow(["api-doc-url", "summary", "path", "method", "query_url", "num of params", "data", "status_code", "response"])
+            res = requests.get(url=url, timeout=5, verify=False, proxies=proxy, headers=headers)
+            res.raise_for_status()
         except Exception as e:
-            logger.error(f"Error writing CSV header: {e}")
-        while not global_data.empty():
-            writer.writerow(global_data.get())
+            logger.error(f"Failed to fetch the Swagger JSON: {e}")
+            return
 
-def print_error(value):
-    logger.error(f"Error in process pool, reason: {value}")
+        res_json = res.json()
+
+        # Handle OpenAPI 3.0 servers
+        basePath = '/'
+        if "servers" in res_json and isinstance(res_json['servers'], list):
+            basePath = res_json['servers'][0]['url']  # Use the first server URL
+
+        paths = res_json.get('paths', {})
+        logger.info(f"[+] {url} has {len(paths)} paths")
+
+        for path, methods in paths.items():
+            if isinstance(methods, dict):
+                logger.debug(f"Testing path {path}")
+                
+                for method, method_details in methods.items():
+                    summary = method_details.get('summary', path)
+                    param_num = str(method_details).count("'in':")
+
+                    logger.debug(f"Method: {method}, Summary: {summary}")
+
+                    if method in ['post', 'put']:
+                        handle_post_put(domain, basePath, path, method, global_data, summary, param_num)
+                    elif method in ['get', 'delete']:
+                        handle_get_delete(domain, basePath, path, method, method_details, global_data, summary, param_num)
+                    else:
+                        logger.error(f"Unknown method: {method}")
+    except Exception as e:
+        logger.error(f"Error in go_docs: {e}")
+
+def handle_post_put(domain, basePath, path, method, global_data, summary, param_num):
+    """Handle POST/PUT requests."""
+    try:
+        param_map = {}
+        path = replace_path_params(path, param_map)
+
+        req_url = build_url(domain, basePath, path)
+        logger.debug(f"Sending {method.upper()} request to {req_url}")
+
+        req_payload = json_payload
+
+        if method == 'post':
+            req = requests.post(url=req_url, data=req_payload, timeout=5, verify=False, proxies=proxy, headers=headers)
+        else:
+            req = requests.put(url=req_url, data=req_payload, timeout=5, verify=False, proxies=proxy, headers=headers)
+
+        logger.debug(f"Response Status Code: {req.status_code}")
+        logger.debug(f"Response Body: {req.text}")
+
+        hhh = [req_url, summary, path, method, req_url, param_num, req_payload, req.status_code, req.text]
+        global_data.put(hhh)
+    except Exception as e:
+        logger.error(f"Error in handle_post_put: {e}")
+
+def handle_get_delete(domain, basePath, path, method, method_details, global_data, summary, param_num):
+    """Handle GET/DELETE requests."""
+    try:
+        param_map = {}
+        path = replace_path_params(path, param_map)
+
+        querystring = ""
+
+        if "parameters" in method_details:
+            for param in method_details['parameters']:
+                p_name = param['name']
+                p_type = param.get('schema', {}).get('type', 'string')
+                param_map[p_name] = payload_array.get(p_type, '1')
+
+            querystring = '&'.join([f"{k}={v}" for k, v in param_map.items()])
+
+        req_url = build_url(domain, basePath, path)
+        if querystring:
+            req_url += '?' + querystring
+
+        logger.debug(f"Sending {method.upper()} request to {req_url}")
+
+        if method == 'get':
+            req = requests.get(url=req_url, timeout=5, verify=False, proxies=proxy, headers=headers)
+        else:
+            req = requests.delete(url=req_url, timeout=5, verify=False, proxies=proxy, headers=headers)
+
+        logger.debug(f"Response Status Code: {req.status_code}")
+        logger.debug(f"Response Body: {req.text}")
+
+        hhh = [req_url, summary, path, method, req_url, param_num, param_map, req.status_code, req.text]
+        global_data.put(hhh)
+    except Exception as e:
+        logger.error(f"Error in handle_get_delete: {e}")
 
 def run(data):
     url = data[0]
@@ -199,33 +214,45 @@ def run(data):
         logger.error("[!] Error")
         exit()
     elif url_type == 1:
-        logger.success(f"working on {url} type: source")
-        go_source(url, q)
+        logger.success(f"Working on {url}, type: resource")
+        go_source(url)
     elif url_type == 2:
-        logger.success(f"working on {url} type: api-docs")
+        logger.success(f"Working on {url}, type: API documentation")
         go_docs(url, q)
     else:
-        logger.success(f"working on {url} type: html")
-        go_html(url, q)
+        logger.success(f"Skipping HTML page: {url}")
 
-def go_html(urlq, q):
-    logger.debug(f"Handling HTML content for URL: {urlq}")
-    pass
+def run_pool(urls):
+    p = Pool(8)
+    manager = Manager()
+    q = manager.Queue()
+    for url in urls:
+        url = url.strip()
+        param = [url, q]
+        p.apply_async(run, args=(param,))
+    p.close()
+    p.join()
+    output_to_csv(q)
 
-def go_source(url, q):
-    logger.debug(f"Handling source content for URL: {url}")
-    pass
+def output_to_csv(global_data):
+    with open('swagger.csv', 'w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow(["API Doc URL", "Summary", "Path", "Method", "Query URL", "Number of Params", "Data", "Status Code", "Response"])
+        while not global_data.empty():
+            writer.writerow(global_data.get())
 
 if __name__ == '__main__':
-    banner()
     parser = argparse.ArgumentParser()
-    parser.add_argument("-u", "--url", dest='target_url', help="resource address or API documentation address or swagger homepage address")
-    parser.add_argument("-f", "--file", dest='url_file', help="batch test")
+    parser.add_argument("-u", "--url", dest='target_url', help="Resource URL, API documentation URL, or Swagger homepage URL")
+    parser.add_argument("-f", "--file", dest='url_file', help="File containing multiple URLs for batch testing")
     args = parser.parse_args()
 
     logger.add("file.log", format="{time:YYYY-MM-DD at HH:mm:ss} | {level} | {message}")
+    banner()
     
     if args.target_url:
         run_pool([args.target_url])
     elif args.url_file:
-        run_pool([args.url_file], is_file=True)
+        with open(args.url_file, 'r') as f:
+            urls = f.readlines()
+        run_pool(urls)
