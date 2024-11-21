@@ -1,3 +1,4 @@
+# add auth token manually if -t didn't work search for -> Bearer ADD-Token-Here
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import json, os, re
@@ -44,7 +45,7 @@ def banner():
 \__ \\ V  V / (_| | (_| | (_| |  __/ | |_____| | | | (_| | (__|   < 
 |___/ \_/\_/ \__,_|\__, |\__, |\___|_|       |_| |_|\__,_|\___|_|\_\\
                    |___/ |___/                                      
-                                                            by 0xSphinx
+                                                            by Elhussain
     
     python swagger.py -h
     ''')
@@ -56,7 +57,8 @@ proxy = {
 
 # Custom headers with a custom User-Agent
 headers = {
-    "User-Agent": "Mozilla/5.0"
+    "User-Agent": "Mozilla/5.0",
+    "Authorization": "Bearer ADD-Token-Here"
 }
 
 def build_url(domain, basePath, path):
@@ -73,25 +75,6 @@ def build_url(domain, basePath, path):
     
     return urljoin(domain + basePath, path)
 
-def check(url):
-    """Check if the URL points to a Swagger homepage, API doc, or resource."""
-    try:
-        res = requests.get(url=url, timeout=5, verify=False, proxies=proxy, headers=headers)
-        if "<html" in res.text:
-            logger.debug("[+] The input URL is a Swagger homepage, parsing API documentation URL")
-            return 3  # HTML
-        elif "\"parameters\"" in res.text:
-            logger.debug("[+] The input URL is an API documentation URL, constructing request payloads")
-            return 2  # API doc
-        elif "\"location\"" in res.text:
-            logger.debug("[+] The input URL is a resource URL, parsing API documentation URL")
-            return 1  # Resource
-    except KeyboardInterrupt:
-        print("Process interrupted")
-    except Exception as e:
-        print(e)
-        return 0
-
 def replace_path_params(path, param_map):
     """Replace placeholders like {userId}, {changeType}, etc., in the URL with actual values."""
     placeholders = re.findall(r"\{(.*?)\}", path)
@@ -105,48 +88,6 @@ def replace_path_params(path, param_map):
     
     return path
 
-def go_docs(url, global_data):
-    """Parse API documentation and send requests based on the methods found."""
-    try:
-        domain = urlparse(url)
-        domain = domain.scheme + "://" + domain.netloc
-
-        try:
-            res = requests.get(url=url, timeout=5, verify=False, proxies=proxy, headers=headers)
-            res.raise_for_status()
-        except Exception as e:
-            logger.error(f"Failed to fetch the Swagger JSON: {e}")
-            return
-
-        res_json = res.json()
-
-        # Handle OpenAPI 3.0 servers
-        basePath = '/'
-        if "servers" in res_json and isinstance(res_json['servers'], list):
-            basePath = res_json['servers'][0]['url']  # Use the first server URL
-
-        paths = res_json.get('paths', {})
-        logger.info(f"[+] {url} has {len(paths)} paths")
-
-        for path, methods in paths.items():
-            if isinstance(methods, dict):
-                logger.debug(f"Testing path {path}")
-                
-                for method, method_details in methods.items():
-                    summary = method_details.get('summary', path)
-                    param_num = str(method_details).count("'in':")
-
-                    logger.debug(f"Method: {method}, Summary: {summary}")
-
-                    if method in ['post', 'put']:
-                        handle_post_put(domain, basePath, path, method, global_data, summary, param_num)
-                    elif method in ['get', 'delete']:
-                        handle_get_delete(domain, basePath, path, method, method_details, global_data, summary, param_num)
-                    else:
-                        logger.error(f"Unknown method: {method}")
-    except Exception as e:
-        logger.error(f"Error in go_docs: {e}")
-
 def handle_post_put(domain, basePath, path, method, global_data, summary, param_num):
     """Handle POST/PUT requests."""
     try:
@@ -155,13 +96,14 @@ def handle_post_put(domain, basePath, path, method, global_data, summary, param_
 
         req_url = build_url(domain, basePath, path)
         logger.debug(f"Sending {method.upper()} request to {req_url}")
+        logger.debug(f"Headers: {headers}")
 
         req_payload = json_payload
 
         if method == 'post':
-            req = requests.post(url=req_url, data=req_payload, timeout=5, verify=False, proxies=proxy, headers=headers)
+            req = requests.post(url=req_url, data=req_payload, timeout=5, verify=False, proxies=proxy, headers=headers.copy())
         else:
-            req = requests.put(url=req_url, data=req_payload, timeout=5, verify=False, proxies=proxy, headers=headers)
+            req = requests.put(url=req_url, data=req_payload, timeout=5, verify=False, proxies=proxy, headers=headers.copy())
 
         logger.debug(f"Response Status Code: {req.status_code}")
         logger.debug(f"Response Body: {req.text}")
@@ -192,11 +134,12 @@ def handle_get_delete(domain, basePath, path, method, method_details, global_dat
             req_url += '?' + querystring
 
         logger.debug(f"Sending {method.upper()} request to {req_url}")
+        logger.debug(f"Headers: {headers}")
 
         if method == 'get':
-            req = requests.get(url=req_url, timeout=5, verify=False, proxies=proxy, headers=headers)
+            req = requests.get(url=req_url, timeout=5, verify=False, proxies=proxy, headers=headers.copy())
         else:
-            req = requests.delete(url=req_url, timeout=5, verify=False, proxies=proxy, headers=headers)
+            req = requests.delete(url=req_url, timeout=5, verify=False, proxies=proxy, headers=headers.copy())
 
         logger.debug(f"Response Status Code: {req.status_code}")
         logger.debug(f"Response Body: {req.text}")
@@ -206,33 +149,47 @@ def handle_get_delete(domain, basePath, path, method, method_details, global_dat
     except Exception as e:
         logger.error(f"Error in handle_get_delete: {e}")
 
-def run(data):
-    url = data[0]
-    q = data[1]
-    url_type = check(url)
-    if url_type == 0:
-        logger.error("[!] Error")
-        exit()
-    elif url_type == 1:
-        logger.success(f"Working on {url}, type: resource")
-        go_source(url)
-    elif url_type == 2:
-        logger.success(f"Working on {url}, type: API documentation")
-        go_docs(url, q)
-    else:
-        logger.success(f"Skipping HTML page: {url}")
+def run(file_path):
+    try:
+        with open(file_path) as f:
+            swagger_data = json.load(f)
 
-def run_pool(urls):
-    p = Pool(8)
-    manager = Manager()
-    q = manager.Queue()
-    for url in urls:
-        url = url.strip()
-        param = [url, q]
-        p.apply_async(run, args=(param,))
-    p.close()
-    p.join()
-    output_to_csv(q)
+        # Extract base URL if available
+        basePath = '/'
+        domain = 'https://ipads.adnoc.ae/api'  # Replace with the appropriate domain
+
+        if 'servers' in swagger_data and isinstance(swagger_data['servers'], list):
+            basePath = swagger_data['servers'][0]['url']
+
+        if 'paths' not in swagger_data:
+            logger.error("[!] Error: No paths found in Swagger file")
+            return
+
+        paths = swagger_data['paths']
+        logger.info(f"[+] Found {len(paths)} paths in Swagger file")
+
+        manager = Manager()
+        global_data = manager.Queue()
+
+        for path, methods in paths.items():
+            for method, method_details in methods.items():
+                logger.info(f"Processing {method.upper()} {path}")
+                summary = method_details.get('summary', path)
+                param_num = str(method_details).count("'in':")
+
+                if method in ['post', 'put']:
+                    handle_post_put(domain, basePath, path, method, global_data, summary, param_num)
+                elif method in ['get', 'delete']:
+                    handle_get_delete(domain, basePath, path, method, method_details, global_data, summary, param_num)
+                else:
+                    logger.error(f"Unknown method: {method}")
+
+        output_to_csv(global_data)
+
+    except json.JSONDecodeError:
+        logger.error("Failed to parse the Swagger JSON file. Please check the format.")
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
 
 def output_to_csv(global_data):
     with open('swagger.csv', 'w', newline='', encoding='utf-8') as f:
@@ -243,16 +200,17 @@ def output_to_csv(global_data):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("-u", "--url", dest='target_url', help="Resource URL, API documentation URL, or Swagger homepage URL")
-    parser.add_argument("-f", "--file", dest='url_file', help="File containing multiple URLs for batch testing")
+    parser.add_argument("-f", "--file", dest='url_file', help="Swagger JSON file containing API documentation")
+    parser.add_argument("-t", "--token", dest='auth_token', help="Bearer token for authorization")
     args = parser.parse_args()
 
     logger.add("file.log", format="{time:YYYY-MM-DD at HH:mm:ss} | {level} | {message}")
     banner()
     
-    if args.target_url:
-        run_pool([args.target_url])
-    elif args.url_file:
-        with open(args.url_file, 'r') as f:
-            urls = f.readlines()
-        run_pool(urls)
+    if args.auth_token:
+        headers["Authorization"] = f"Bearer {args.auth_token}"
+    
+    if args.url_file:
+        run(args.url_file)
+    else:
+        logger.error("Please provide a Swagger JSON file using -f option.")
